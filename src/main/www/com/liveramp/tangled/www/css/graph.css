@@ -70,6 +70,7 @@ textarea {
     width: 100%;
     margin: 5px 0;
     padding: 3px;
+    text-align: center;
 }
 
 .legend {

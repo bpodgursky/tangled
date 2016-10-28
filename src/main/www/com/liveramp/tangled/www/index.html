@@ -8,7 +8,7 @@
 
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-  <link rel="stylesheet" type="text/css" href="resources/bootstrap.min.css">
+  <link rel="stylesheet" type="text/css" href="resources/bootstrap.css">
   <link rel="stylesheet" type="text/css" href="css/graph.css">
 
   <script type="text/javascript" src="resources/jquery-3.1.1.min.js"></script>
@@ -224,7 +224,7 @@
         classes: {}
       };
 
-      artifactCopy.prettyName = artifact.prettyName + getLabel(artifact);
+      artifactCopy.prettyName = artifact.prettyName.replace(".", "<br>") + getLabel(artifact);
 
       if (isInclude(artifact)) {
         artifactCopy.classes['artifact'] = true;
@@ -317,6 +317,11 @@
     });
   }
 
+  function buildLabel(pretty){
+    return pretty;
+//    return pretty.split(".").join("<br>")
+  }
+
   function redrawGraph() {
 
     $("#svg-canvas").empty();
@@ -332,7 +337,8 @@
 
     dataParsed.artifacts.forEach(function (e) {
       g.setNode(e.fullName, {
-        label: e.prettyName,
+        labelType: "html",
+        label: buildLabel(e.prettyName),
         class: Object.keys(e.classes).join(' '),
         rx: 5,
         ry: 5
