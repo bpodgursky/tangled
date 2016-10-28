@@ -1,0 +1,80 @@
+
+text {
+    font-weight: 300;
+    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+    font-size: 14px;
+}
+
+rect {
+    fill: #fff;
+}
+
+text {
+    pointer-events: none;
+}
+
+.node > rect {
+    stroke-width: 1px;
+    stroke: #333;
+    opacity: 0.5;
+}
+
+.edge rect {
+    fill: #fff
+}
+
+.toggleable {
+    cursor: pointer;
+}
+
+.collapsible > rect {
+    fill: #b5e3ff;
+}
+
+.fixed > rect {
+    fill: #00ffd0;
+}
+
+.frontier > rect {
+    fill: #d3d7d9;
+}
+
+.edgePath path {
+    stroke: #333;
+    stroke-width: 1.5px;
+}
+
+html, body {
+    margin: 0;
+    padding: 0;
+    overflow: hidden
+}
+
+.main-svg {
+    position: fixed;
+    top: 50px;
+    left: 0;
+    height: 1000px;
+    width: 100%;
+    border: 1px solid #999;
+}
+
+.legend-svg {
+    position: fixed;
+    height: 60px;
+    width: 600px;
+}
+
+textarea {
+    border: 1px solid #999999;
+    width: 100%;
+    margin: 5px 0;
+    padding: 3px;
+}
+
+.legend {
+    stroke-width: 3px;
+    stroke: #333;
+    fill: none;
+    opacity: 0.5;
+}

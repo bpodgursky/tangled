@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+
+<html lang="en">
+
+<head>
+
+  <title>Maven Dependency Graph</title>
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <link rel="stylesheet" type="text/css" href="resources/bootstrap.min.css">
+  <link rel="stylesheet" type="text/css" href="css/graph.css">
+
+  <script type="text/javascript" src="resources/jquery-3.1.1.min.js"></script>
+  <script src="resources/bootstrap.min.js" charset="utf-8"></script>
+  <script src="resources/d3.v3.min.js" charset="utf-8"></script>
+  <script src="resources/dagre-d3.min.js"></script>
+
+  <script src="js/multimap.js"></script>
+
+</head>
+
+<body>
+
+<div>
+  <input class="input" type="text" id="groupId" placeholder="groupId" value="com.liveramp">
+  <input class="input" type="text" id="artifactId" placeholder="artifactId" value="dustin_scripts">
+  <input class="input" type="text" id="version" placeholder="version" value="1.0-SNAPSHOT">
+  <input class="input" type="text" id="scope" placeholder="scope" value="compile">
+
+  <button class="btn btn-warning" id="submit-artifact" type="button">Change Root</button>
+
+  <input class="input" type="text" id="package_filter" placeholder="expand all in package" value="">
+  <button class="btn btn-warning" id="expand-package" type="button">Expand</button>
+
+  <input class="input" type="text" id="sourceGroupId" placeholder="search from group" value="">
+  <input class="input" type="text" id="sourceArtifactId" placeholder="search from artifact" value="">
+
+  <button class="btn btn-warning" id="path-from-artifact" type="button">Show Path</button>
+
+  Render collapsed as:
+  <div class="btn-group" id="dep-visible-toggle" data-toggle="buttons">
+    <label id="dep_size_label" class="btn btn-primary">
+      <input type="radio" name="options" id="dep_size"> Size (MB)
+    </label>
+    <label id="dep_artifacts_label" class="btn btn-primary active">
+      <input type="radio" name="options" id="dep_artifacts"> Artifact count
+    </label>
+    <label id="dep_hidden_label" class="btn btn-primary">
+      <input type="radio" name="options" id="dep_hidden"> Hidden
+    </label>
+  </div>
+
+</div>
+
+<div id="attach">
+  <svg id="svg-canvas" class="main-svg"></svg>
+</div>
+
+
+<script>
+
+  var expandedArtifacts = {};
+  var renderMode = "dep_artifacts";
+  var dataRaw;
+
+  function resetExpand(){
+    expandedArtifacts = {};
+  }
+
+  $("#path-from-artifact").click(function (e) {
+    e.preventDefault();
+
+    resetExpand();
+
+    $("#dep-visible-toggle label").removeClass('active');
+    $("#dep_hidden_label").addClass('active');
+    renderMode = "dep_hidden";
+
+    var groupId = $("#sourceGroupId").val();
+    var artifactId = $("#sourceArtifactId").val();
+
+    $("#sourceGroupId").val('');
+    $("#sourceArtifactId").val('');
+
+    expandAllChildren(
+        groupId,
+        artifactId
+    );
+
+    redrawGraph();
+
+  });
+
+  $("#submit-artifact").click(function (e) {
+    e.preventDefault();
+
+    resetExpand();
+    renderFromInputs();
+  });
+
+  $("#expand-package").click(function (e) {
+    e.preventDefault();
+
+    resetExpand();
+
+    var prefix = $("#package_filter").val();
+    $("#package_filter").val('');
+
+    dataRaw.artifacts.forEach(function (e) {
+      if (e.fullName.startsWith(prefix)) {
+        expandedArtifacts[e.fullName] = true;
+      }
+    });
+
+    redrawGraph();
+  });
+
+  $("#dep-visible-toggle").click(function (e) {
+    e.preventDefault();
+    renderMode = $(e.target).find('input').attr('id');
+    redrawGraph();
+  });
+
+
+  function renderCollapsed() {
+    return renderMode != 'dep_hidden'
+  }
+
+  function getLabel(artifact) {
+
+    if (renderMode == 'dep_artifacts') {
+      if (artifact.totalDeps > 1) {
+        return ' (' + artifact.totalDeps + ')';
+      } else {
+        return '';
+      }
+    } else if(renderMode == 'dep_size'){
+      return ' ('+(artifact.inheritSize/1000000).toFixed(2)+')';
+    }else{
+      return '';
+    }
+
+  }
+
+  function expandAllChildren(group, artifact) {
+
+    var edges = new MultiMap();
+
+    dataRaw.edges.forEach(function (e) {
+      edges.put(e.source, e.target);
+    });
+
+    var sourceName = group + "." + artifact;
+    var queue = [sourceName];
+
+    while (queue.length > 0) {
+      var pop = queue.pop();
+      expandedArtifacts[pop] = true;
+
+      edges.get(pop).forEach(function (e) {
+        queue.push(e);
+      });
+    }
+
+  }
+
+  function renderFromInputs() {
+
+    var artifactId = $("#artifactId").val();
+    var groupId = $("#groupId").val();
+
+    expandedArtifacts[groupId + "." + artifactId] = true;
+
+    loadGraph(
+        artifactId,
+        groupId,
+        $("#version").val(),
+        $("#scope").val()
+    );
+  }
+
+  function isInclude(node) {
+    return expandedArtifacts[node.fullName];
+  }
+
+
+  function buildCollapsedGraph(data) {
+
+    var artifacts = data.artifacts;
+    var edges = data.edges;
+
+    var rawEdges = new MultiMap();
+
+    edges.forEach(function (e) {
+      rawEdges.put(e.source, e.target);
+    });
+
+    var artifactsByName = {};
+    artifacts.forEach(function (a) {
+      artifactsByName[a.fullName] = a;
+
+      a.collapsedSize = a.size;
+      a.collapsedArtifacts = 1;
+
+    });
+
+
+    var collapsedGraphNodes = [];
+    var collapsedGraphEdges = [];
+
+    var collapsedGraph = {};
+
+    artifacts.forEach(function (artifact) {
+      var artifactName = artifact.fullName;
+
+      var artifactCopy = {
+        artifactId: artifact.artifactId,
+        groupId: artifact.groupId,
+        fullName: artifact.fullName,
+        inheritSize: artifact.inheritSize,
+        totalDeps: artifact.totalDeps,
+        size: artifact.size,
+        classes: {}
+      };
+
+      artifactCopy.prettyName = artifact.prettyName + getLabel(artifact);
+
+      if (isInclude(artifact)) {
+        artifactCopy.classes['artifact'] = true;
+
+        collapsedGraph[artifactName] = artifactCopy;
+      }
+
+      else if (renderCollapsed()) {
+
+        artifactCopy.classes['frontier'] = true;
+        artifactCopy.classes['toggleable'] = true
+
+      }
+
+      rawEdges.get(artifactName).forEach(function (target) {
+
+        if (isInclude(artifactCopy) || renderCollapsed()) {
+          if (isInclude(artifactsByName[target])) {
+
+            collapsedGraphEdges.push({
+              source: artifactName,
+              target: target
+            });
+
+            collapsedGraph[artifactName] = artifactCopy;
+          }
+
+        }
+      });
+
+    });
+
+    for (var key in collapsedGraph) {
+      collapsedGraphNodes.push(collapsedGraph[key]);
+    }
+
+    //  classes: expandable (frontier) collapsable (all deps are frontier) fixed (other)
+
+    var reverseEdges = new MultiMap();
+    collapsedGraphEdges.forEach(function (e) {
+      reverseEdges.put(e.target, e.source);
+    });
+
+    collapsedGraphNodes.forEach(function (artifact) {
+
+      if (artifact.classes['artifact']) {
+
+        var interiorEdges = false;
+        reverseEdges.get(artifact.fullName).forEach(function (e) {
+
+          if (collapsedGraph[e].classes['artifact']) {
+            interiorEdges = true;
+          }
+        });
+
+        if (!interiorEdges) {
+          artifact.classes['collapsible'] = true
+          artifact.classes['toggleable'] = true
+        } else {
+          artifact.classes['fixed'] = true
+        }
+
+      }
+
+    });
+
+    return {
+      artifacts: collapsedGraphNodes,
+      edges: collapsedGraphEdges
+    }
+
+  }
+
+  function loadGraph(artifactId, groupId, version, scope) {
+
+    $.ajax({
+      type: 'GET',
+      dataType: 'html',
+      url: "graph",
+      data: {
+        artifactId: artifactId,
+        groupId: groupId,
+        version: version,
+        scope: scope
+      },
+      success: function (data) {
+        dataRaw = JSON.parse(data);
+        redrawGraph();
+      }
+    });
+  }
+
+  function redrawGraph() {
+
+    $("#svg-canvas").empty();
+
+
+    var dataParsed = buildCollapsedGraph(dataRaw);
+
+    var g = new dagreD3.graphlib.Graph()
+        .setGraph({})
+        .setDefaultEdgeLabel(function () {
+          return {};
+        });
+
+    dataParsed.artifacts.forEach(function (e) {
+      g.setNode(e.fullName, {
+        label: e.prettyName,
+        class: Object.keys(e.classes).join(' '),
+        rx: 5,
+        ry: 5
+      });
+
+    });
+
+    dataParsed.edges.forEach(function (e) {
+      g.setEdge(e.source, e.target, {
+        lineTension: .9,
+        lineInterpolate: "bundle"
+      });
+    });
+
+    var render = new dagreD3.render();
+
+    var svg = d3.select("#svg-canvas");
+    var svgGroup = svg.append("g");
+
+    render(d3.select("#svg-canvas g"), g);
+
+    svgGroup
+        .selectAll(".toggleable")
+        .on("click", function (d) {
+          if (expandedArtifacts[d]) {
+            expandedArtifacts[d] = false;
+          } else {
+            expandedArtifacts[d] = true;
+          }
+          redrawGraph();
+        });
+
+    var xCenterOffset = (svg.attr("width") - g.graph().width) / 2;
+    svgGroup.attr("transform", "translate(" + xCenterOffset + ", 20)");
+    svg.attr("height", g.graph().height + 40);
+
+    //  enable zoom and scrolling
+    svgGroup.attr("transform", "translate(5, 5)");
+    svg.call(d3.behavior.zoom().on("zoom", function redraw() {
+      svgGroup.attr("transform",
+          "translate(" + d3.event.translate + ")" + " scale(" + d3.event.scale + ")");
+    }));
+
+  }
+
+  renderFromInputs();
+
+</script>
+
+
+</body>
+
+</html>
