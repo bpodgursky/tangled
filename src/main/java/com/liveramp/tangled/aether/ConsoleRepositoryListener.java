@@ -5,6 +5,7 @@ import java.io.PrintStream;
 import org.eclipse.aether.AbstractRepositoryListener;
 import org.eclipse.aether.RepositoryEvent;
 
+//  copied from aether demo
 public class ConsoleRepositoryListener
     extends AbstractRepositoryListener
 {

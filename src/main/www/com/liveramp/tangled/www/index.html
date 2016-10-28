@@ -64,7 +64,7 @@
   var renderMode = "dep_artifacts";
   var dataRaw;
 
-  function resetExpand(){
+  function resetExpand() {
     expandedArtifacts = {};
   }
 
@@ -135,9 +135,9 @@
       } else {
         return '';
       }
-    } else if(renderMode == 'dep_size'){
-      return ' ('+(artifact.inheritSize/1000000).toFixed(2)+')';
-    }else{
+    } else if (renderMode == 'dep_size') {
+      return ' (' + (artifact.inheritSize / 1000000).toFixed(2) + ')';
+    } else {
       return '';
     }
 
@@ -369,7 +369,6 @@
     svgGroup.attr("transform", "translate(" + xCenterOffset + ", 20)");
     svg.attr("height", g.graph().height + 40);
 
-    //  enable zoom and scrolling
     svgGroup.attr("transform", "translate(5, 5)");
     svg.call(d3.behavior.zoom().on("zoom", function redraw() {
       svgGroup.attr("transform",
@@ -378,7 +377,19 @@
 
   }
 
-  renderFromInputs();
+  $.ajax({
+    type: 'GET',
+    dataType: 'html',
+    url: "defaults",
+    success: function (data) {
+      var defaults = JSON.parse(data);
+
+      $("#groupId").val(defaults.groupId);
+      $("#artifactId").val(defaults.artifactId);
+
+      renderFromInputs();
+    }
+  });
 
 </script>
 

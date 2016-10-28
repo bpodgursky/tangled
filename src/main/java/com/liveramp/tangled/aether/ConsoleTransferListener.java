@@ -12,6 +12,7 @@ import org.eclipse.aether.transfer.MetadataNotFoundException;
 import org.eclipse.aether.transfer.TransferEvent;
 import org.eclipse.aether.transfer.TransferResource;
 
+//  copied from aether demo
 public class ConsoleTransferListener
     extends AbstractTransferListener
 {

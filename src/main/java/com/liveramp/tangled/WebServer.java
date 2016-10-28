@@ -7,9 +7,11 @@ import java.io.FileReader;
 import java.io.IOException;
 import java.net.URL;
 import java.util.EnumSet;
+import java.util.List;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 
+import com.google.common.collect.Lists;
 import org.apache.commons.io.FileUtils;
 import org.apache.log4j.xml.DOMConfigurator;
 import org.eclipse.aether.repository.RemoteRepository;
@@ -21,6 +23,7 @@ import org.eclipse.jetty.servlet.ServletHolder;
 import org.eclipse.jetty.servlets.GzipFilter;
 import org.eclipse.jetty.util.thread.ExecutorThreadPool;
 import org.eclipse.jetty.webapp.WebAppContext;
+import org.json.JSONArray;
 import org.json.JSONObject;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -30,21 +33,10 @@ public class WebServer implements Runnable {
 
   private final Semaphore shutdownLock = new Semaphore(0);
 
-
-
-        new RemoteRepository
-            .Builder("all-snapshots", "default", "http://artifactory.liveramp.net/artifactory/all-snapshots/")
-            .setSnapshotPolicy(new RepositoryPolicy(true, RepositoryPolicy.UPDATE_POLICY_DAILY, null))
-      .setReleasePolicy(new RepositoryPolicy(false, null, null))
-      .build(),
-        new RemoteRepository.Builder("libs-release", "default", "http://artifactory.liveramp.net/artifactory/libs-release/")
-            .setSnapshotPolicy(new RepositoryPolicy(false, null, null))
-      .setReleasePolicy(new RepositoryPolicy(true, RepositoryPolicy.UPDATE_POLICY_DAILY, null))
-      .build()
-
+  private final JSONObject configuration;
 
   public WebServer(JSONObject configuration) {
-
+    this.configuration = configuration;
   }
 
   public final void shutdown() {
@@ -68,7 +60,16 @@ public class WebServer implements Runnable {
 
       WebAppContext context = new WebAppContext(warUrlString, "/");
 
-      context.addServlet(new ServletHolder(new JSONServlet(new GraphServlet())), "/graph");
+      context.addServlet(new ServletHolder(new JSONServlet(new DefaultsServlet(
+          configuration.getString("defaultGroup"),
+          configuration.getString("defaultArtifact")
+      ))), "/defaults");
+
+      context.addServlet(new ServletHolder(new JSONServlet(new GraphServlet(
+          getRemoteRepositories(configuration),
+          configuration.getString("localRepository"),
+          configuration.getString("truncatePrefix")
+      ))), "/graph");
 
       context.addFilter(GzipFilter.class, "/*", EnumSet.of(DispatcherType.REQUEST));
 
@@ -81,6 +82,48 @@ public class WebServer implements Runnable {
     } catch (Exception e) {
       throw new RuntimeException(e);
     }
+  }
+
+  public List<RemoteRepository> getRemoteRepositories(JSONObject configuration) {
+
+    List<RemoteRepository> repositories = Lists.newArrayList();
+
+    JSONArray snapshotRepos = configuration.getJSONArray("snapshotRepositories");
+
+    for (int i = 0; i < snapshotRepos.length(); i++) {
+      JSONObject repo = snapshotRepos.getJSONObject(i);
+
+      String id = repo.getString("id");
+      String type = repo.getString("type");
+      String url = repo.getString("url");
+      String updatePolicy = repo.getString("updatePolicy");
+
+      repositories.add(new RemoteRepository.Builder(id, type, url)
+          .setSnapshotPolicy(new RepositoryPolicy(true, updatePolicy, null))
+          .setReleasePolicy(new RepositoryPolicy(false, null, null))
+          .build()
+      );
+    }
+
+    JSONArray releaseRepos = configuration.getJSONArray("releaseRepositories");
+
+    for (int i = 0; i < releaseRepos.length(); i++) {
+      JSONObject repo = releaseRepos.getJSONObject(i);
+
+      String id = repo.getString("id");
+      String type = repo.getString("type");
+      String url = repo.getString("url");
+      String updatePolicy = repo.getString("updatePolicy");
+
+      repositories.add(new RemoteRepository.Builder(id, type, url)
+          .setSnapshotPolicy(new RepositoryPolicy(false, null, null))
+          .setReleasePolicy(new RepositoryPolicy(true, updatePolicy, null))
+          .build()
+      );
+    }
+
+    return repositories;
+
   }
 
 
