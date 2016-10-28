@@ -7,7 +7,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Queue;
 import java.util.Set;
-import java.util.stream.Collectors;
 
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
@@ -97,7 +96,7 @@ public class GraphServlet implements JSONServlet.Processor {
       dependencyRequest.setCollectRequest(collectRequest);
 
 
-      Set<Artifact> toCollect = Sets.newHashSet();
+      final Set<Artifact> toCollect = Sets.newHashSet();
 
       collectResult.getRoot().accept(new DependencyVisitor() {
         @Override
@@ -121,7 +120,12 @@ public class GraphServlet implements JSONServlet.Processor {
       ));
 
 
-      List<ArtifactResult> artifactResult = system.resolveArtifacts(session, toCollect.stream().map(dep -> new ArtifactRequest(dep, repositories, scope)).collect(Collectors.toList()));
+      List<ArtifactRequest> requests = Lists.newArrayList();
+      for (Artifact artifact1 : toCollect) {
+        requests.add(new ArtifactRequest(artifact1, repositories, scope));
+      }
+
+      List<ArtifactResult> artifactResult = system.resolveArtifacts(session, requests);
 
       for (ArtifactResult result : artifactResult) {
         Artifact resArt = result.getArtifact();
