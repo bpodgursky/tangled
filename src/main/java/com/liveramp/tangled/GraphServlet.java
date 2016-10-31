@@ -1,6 +1,5 @@
 package com.liveramp.tangled;
 
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
@@ -11,6 +10,7 @@ import java.util.Set;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
+import io.takari.aether.localrepo.TakariLocalRepositoryManagerFactory;
 import org.apache.maven.repository.internal.MavenRepositorySystemUtils;
 import org.eclipse.aether.DefaultRepositorySystemSession;
 import org.eclipse.aether.RepositorySystem;
@@ -18,16 +18,14 @@ import org.eclipse.aether.artifact.Artifact;
 import org.eclipse.aether.artifact.DefaultArtifact;
 import org.eclipse.aether.collection.CollectRequest;
 import org.eclipse.aether.collection.CollectResult;
-import org.eclipse.aether.collection.DependencyCollectionException;
 import org.eclipse.aether.connector.basic.BasicRepositoryConnectorFactory;
 import org.eclipse.aether.graph.Dependency;
 import org.eclipse.aether.graph.DependencyNode;
 import org.eclipse.aether.graph.DependencyVisitor;
 import org.eclipse.aether.impl.DefaultServiceLocator;
 import org.eclipse.aether.repository.LocalRepository;
+import org.eclipse.aether.repository.NoLocalRepositoryManagerException;
 import org.eclipse.aether.repository.RemoteRepository;
-import org.eclipse.aether.repository.RepositoryPolicy;
-import org.eclipse.aether.resolution.ArtifactDescriptorException;
 import org.eclipse.aether.resolution.ArtifactRequest;
 import org.eclipse.aether.resolution.ArtifactResult;
 import org.eclipse.aether.resolution.DependencyRequest;
@@ -61,7 +59,7 @@ public class GraphServlet implements JSONServlet.Processor {
 
   public GraphServlet(List<RemoteRepository> remoteRepositories,
                       String localRepository,
-                      String truncatePrefix) {
+                      String truncatePrefix) throws NoLocalRepositoryManagerException {
     system = newRepositorySystem();
     session = newRepositorySystemSession(localRepository, system);
     repositories = remoteRepositories;
@@ -74,98 +72,94 @@ public class GraphServlet implements JSONServlet.Processor {
   @Override
   public JSONObject getData(Map<String, String> parameters) throws Exception {
 
-    //  TODO parallelize
-    synchronized (system) {
+    String group = parameters.get("groupId");
+    String artifactId = parameters.get("artifactId");
+    String version = parameters.get("version");
+    String scope = parameters.get("scope");
 
-      String group = parameters.get("groupId");
-      String artifactId = parameters.get("artifactId");
-      String version = parameters.get("version");
-      String scope = parameters.get("scope");
+    LOG.info("Getting request: " + parameters);
 
-      LOG.info("Getting request: " + parameters);
+    Artifact artifact = new DefaultArtifact(group + ":" + artifactId + ":" + version);
 
-      Artifact artifact = new DefaultArtifact(group + ":" + artifactId + ":" + version);
+    CollectRequest collectRequest = new CollectRequest();
+    collectRequest.setRoot(new Dependency(artifact, scope));
+    collectRequest.setRepositories(repositories);
 
-      CollectRequest collectRequest = new CollectRequest();
-      collectRequest.setRoot(new Dependency(artifact, scope));
-      collectRequest.setRepositories(repositories);
+    CollectResult collectResult = system.collectDependencies(session, collectRequest);
 
-      CollectResult collectResult = system.collectDependencies(session, collectRequest);
-
-      DependencyRequest dependencyRequest = new DependencyRequest();
-      dependencyRequest.setCollectRequest(collectRequest);
+    DependencyRequest dependencyRequest = new DependencyRequest();
+    dependencyRequest.setCollectRequest(collectRequest);
 
 
-      final Set<Artifact> toCollect = Sets.newHashSet();
+    final Set<Artifact> toCollect = Sets.newHashSet();
 
-      collectResult.getRoot().accept(new DependencyVisitor() {
-        @Override
-        public boolean visitEnter(DependencyNode node) {
-          toCollect.add(node.getArtifact());
-          return true;
-        }
-
-        @Override
-        public boolean visitLeave(DependencyNode node) {
-          return true;
-        }
-      });
-
-      Map<String, Node> allDeps = Maps.newHashMap();
-      DirectedGraph<String, DefaultEdge> graph = new SimpleDirectedGraph<>(DefaultEdge.class);
-
-      collectResult.getRoot().accept(new DependencyEdgeGenerator(
-          allDeps,
-          graph
-      ));
-
-
-      List<ArtifactRequest> requests = Lists.newArrayList();
-      for (Artifact artifact1 : toCollect) {
-        requests.add(new ArtifactRequest(artifact1, repositories, scope));
+    collectResult.getRoot().accept(new DependencyVisitor() {
+      @Override
+      public boolean visitEnter(DependencyNode node) {
+        toCollect.add(node.getArtifact());
+        return true;
       }
 
-      List<ArtifactResult> artifactResult = system.resolveArtifacts(session, requests);
-
-      for (ArtifactResult result : artifactResult) {
-        Artifact resArt = result.getArtifact();
-        allDeps.get(getFullName(resArt)).setSize((int)resArt.getFile().length());
+      @Override
+      public boolean visitLeave(DependencyNode node) {
+        return true;
       }
+    });
 
-      LOG.info("Generated graph with " + graph.vertexSet().size() + " nodes and " + graph.edgeSet().size() + " edges");
+    Map<String, Node> allDeps = Maps.newHashMap();
+    DirectedGraph<String, DefaultEdge> graph = new SimpleDirectedGraph<>(DefaultEdge.class);
 
-      removeRedundantEdges(graph);
-      setInheritedValues(allDeps, graph);
+    collectResult.getRoot().accept(new DependencyEdgeGenerator(
+        allDeps,
+        graph
+    ));
 
-      LOG.info("Pruned graph to " + graph.vertexSet().size() + " nodes and " + graph.edgeSet().size() + " edges");
 
-      JSONArray edges = new JSONArray();
-      for (DefaultEdge edge : graph.edgeSet()) {
-        edges.put(new JSONObject()
-            .put("source", graph.getEdgeTarget(edge))
-            .put("target", graph.getEdgeSource(edge)));
-      }
-
-      JSONArray array = new JSONArray();
-      for (String name : getNodesInTraversalOrder(graph)) {
-        Node node = allDeps.get(name);
-
-        array.put(new JSONObject()
-            .put("artifactId", node.getArtifactId())
-            .put("groupId", node.getGroupId())
-            .put("prettyName", node.getPrettyName())
-            .put("fullName", node.getFullName())
-            .put("inheritSize", node.getInheritSize())
-            .put("totalDeps", node.getTotalDeps())
-            .put("size", node.getSize())
-        );
-      }
-
-      return new JSONObject()
-          .put("artifacts", array)
-          .put("edges", edges);
-
+    List<ArtifactRequest> requests = Lists.newArrayList();
+    for (Artifact artifact1 : toCollect) {
+      requests.add(new ArtifactRequest(artifact1, repositories, scope));
     }
+
+    List<ArtifactResult> artifactResult = system.resolveArtifacts(session, requests);
+
+    for (ArtifactResult result : artifactResult) {
+      Artifact resArt = result.getArtifact();
+      allDeps.get(getFullName(resArt)).setSize((int)resArt.getFile().length());
+    }
+
+    LOG.info("Generated graph with " + graph.vertexSet().size() + " nodes and " + graph.edgeSet().size() + " edges");
+
+    removeRedundantEdges(graph);
+    setInheritedValues(allDeps, graph);
+
+    LOG.info("Pruned graph to " + graph.vertexSet().size() + " nodes and " + graph.edgeSet().size() + " edges");
+
+    JSONArray edges = new JSONArray();
+    for (DefaultEdge edge : graph.edgeSet()) {
+      edges.put(new JSONObject()
+          .put("source", graph.getEdgeTarget(edge))
+          .put("target", graph.getEdgeSource(edge)));
+    }
+
+    JSONArray array = new JSONArray();
+    for (String name : getNodesInTraversalOrder(graph)) {
+      Node node = allDeps.get(name);
+
+      array.put(new JSONObject()
+          .put("artifactId", node.getArtifactId())
+          .put("groupId", node.getGroupId())
+          .put("prettyName", node.getPrettyName())
+          .put("fullName", node.getFullName())
+          .put("inheritSize", node.getInheritSize())
+          .put("totalDeps", node.getTotalDeps())
+          .put("size", node.getSize())
+      );
+    }
+
+    return new JSONObject()
+        .put("artifacts", array)
+        .put("edges", edges);
+
   }
 
 
@@ -332,13 +326,13 @@ public class GraphServlet implements JSONServlet.Processor {
     return locator.getService(RepositorySystem.class);
   }
 
-  public static DefaultRepositorySystemSession newRepositorySystemSession(String localRepository, org.eclipse.aether.RepositorySystem system) {
+  public static DefaultRepositorySystemSession newRepositorySystemSession(String localRepository, org.eclipse.aether.RepositorySystem system) throws NoLocalRepositoryManagerException {
     DefaultRepositorySystemSession session = MavenRepositorySystemUtils.newSession();
 
     LocalRepository localRepo = new LocalRepository(localRepository);
     session.setTransferListener(new ConsoleTransferListener());
     session.setRepositoryListener(new ConsoleRepositoryListener());
-    session.setLocalRepositoryManager(system.newLocalRepositoryManager(session, localRepo));
+    session.setLocalRepositoryManager(new TakariLocalRepositoryManagerFactory().newInstance(session, localRepo));
 
     return session;
   }
