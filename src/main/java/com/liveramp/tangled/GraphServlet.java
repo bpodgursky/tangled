@@ -27,6 +27,7 @@ import org.eclipse.aether.repository.LocalRepository;
 import org.eclipse.aether.repository.NoLocalRepositoryManagerException;
 import org.eclipse.aether.repository.RemoteRepository;
 import org.eclipse.aether.resolution.ArtifactRequest;
+import org.eclipse.aether.resolution.ArtifactResolutionException;
 import org.eclipse.aether.resolution.ArtifactResult;
 import org.eclipse.aether.resolution.DependencyRequest;
 import org.eclipse.aether.spi.connector.RepositoryConnectorFactory;
@@ -72,93 +73,103 @@ public class GraphServlet implements JSONServlet.Processor {
   @Override
   public JSONObject getData(Map<String, String> parameters) throws Exception {
 
-    String group = parameters.get("groupId");
-    String artifactId = parameters.get("artifactId");
-    String version = parameters.get("version");
-    String scope = parameters.get("scope");
+    try {
 
-    LOG.info("Getting request: " + parameters);
+      String group = parameters.get("groupId");
+      String artifactId = parameters.get("artifactId");
+      String version = parameters.get("version");
+      String scope = parameters.get("scope");
 
-    Artifact artifact = new DefaultArtifact(group + ":" + artifactId + ":" + version);
+      LOG.info("Getting request: " + parameters);
 
-    CollectRequest collectRequest = new CollectRequest();
-    collectRequest.setRoot(new Dependency(artifact, scope));
-    collectRequest.setRepositories(repositories);
+      Artifact artifact = new DefaultArtifact(group + ":" + artifactId + ":" + version);
 
-    CollectResult collectResult = system.collectDependencies(session, collectRequest);
+      CollectRequest collectRequest = new CollectRequest();
+      collectRequest.setRoot(new Dependency(artifact, scope));
+      collectRequest.setRepositories(repositories);
 
-    DependencyRequest dependencyRequest = new DependencyRequest();
-    dependencyRequest.setCollectRequest(collectRequest);
+      CollectResult collectResult = system.collectDependencies(session, collectRequest);
+
+      DependencyRequest dependencyRequest = new DependencyRequest();
+      dependencyRequest.setCollectRequest(collectRequest);
 
 
-    final Set<Artifact> toCollect = Sets.newHashSet();
+      final Set<Artifact> toCollect = Sets.newHashSet();
 
-    collectResult.getRoot().accept(new DependencyVisitor() {
-      @Override
-      public boolean visitEnter(DependencyNode node) {
-        toCollect.add(node.getArtifact());
-        return true;
+      collectResult.getRoot().accept(new DependencyVisitor() {
+        @Override
+        public boolean visitEnter(DependencyNode node) {
+          toCollect.add(node.getArtifact());
+          return true;
+        }
+
+        @Override
+        public boolean visitLeave(DependencyNode node) {
+          return true;
+        }
+      });
+
+      Map<String, Node> allDeps = Maps.newHashMap();
+      DirectedGraph<String, DefaultEdge> graph = new SimpleDirectedGraph<>(DefaultEdge.class);
+
+      collectResult.getRoot().accept(new DependencyEdgeGenerator(
+          allDeps,
+          graph
+      ));
+
+
+      List<ArtifactRequest> requests = Lists.newArrayList();
+      for (Artifact artifact1 : toCollect) {
+        requests.add(new ArtifactRequest(artifact1, repositories, scope));
       }
 
-      @Override
-      public boolean visitLeave(DependencyNode node) {
-        return true;
+      List<ArtifactResult> artifactResult = system.resolveArtifacts(session, requests);
+
+      for (ArtifactResult result : artifactResult) {
+        Artifact resArt = result.getArtifact();
+        allDeps.get(getFullName(resArt)).setSize((int)resArt.getFile().length());
       }
-    });
 
-    Map<String, Node> allDeps = Maps.newHashMap();
-    DirectedGraph<String, DefaultEdge> graph = new SimpleDirectedGraph<>(DefaultEdge.class);
+      LOG.info("Generated graph with " + graph.vertexSet().size() + " nodes and " + graph.edgeSet().size() + " edges");
 
-    collectResult.getRoot().accept(new DependencyEdgeGenerator(
-        allDeps,
-        graph
-    ));
+      removeRedundantEdges(graph);
+      setInheritedValues(allDeps, graph);
+
+      LOG.info("Pruned graph to " + graph.vertexSet().size() + " nodes and " + graph.edgeSet().size() + " edges");
+
+      JSONArray edges = new JSONArray();
+      for (DefaultEdge edge : graph.edgeSet()) {
+        edges.put(new JSONObject()
+            .put("source", graph.getEdgeTarget(edge))
+            .put("target", graph.getEdgeSource(edge)));
+      }
+
+      JSONArray array = new JSONArray();
+      for (String name : getNodesInTraversalOrder(graph)) {
+        Node node = allDeps.get(name);
+
+        array.put(new JSONObject()
+            .put("artifactId", node.getArtifactId())
+            .put("groupId", node.getGroupId())
+            .put("prettyName", node.getPrettyName())
+            .put("fullName", node.getFullName())
+            .put("inheritSize", node.getInheritSize())
+            .put("totalDeps", node.getTotalDeps())
+            .put("size", node.getSize())
+        );
+      }
+
+      return new JSONObject()
+          .put("artifacts", array)
+          .put("edges", edges);
 
 
-    List<ArtifactRequest> requests = Lists.newArrayList();
-    for (Artifact artifact1 : toCollect) {
-      requests.add(new ArtifactRequest(artifact1, repositories, scope));
+    }catch (ArtifactResolutionException e){
+      LOG.info("Error resolving artifact ", e);
+
+      return new JSONObject()
+          .put("error" , true);
     }
-
-    List<ArtifactResult> artifactResult = system.resolveArtifacts(session, requests);
-
-    for (ArtifactResult result : artifactResult) {
-      Artifact resArt = result.getArtifact();
-      allDeps.get(getFullName(resArt)).setSize((int)resArt.getFile().length());
-    }
-
-    LOG.info("Generated graph with " + graph.vertexSet().size() + " nodes and " + graph.edgeSet().size() + " edges");
-
-    removeRedundantEdges(graph);
-    setInheritedValues(allDeps, graph);
-
-    LOG.info("Pruned graph to " + graph.vertexSet().size() + " nodes and " + graph.edgeSet().size() + " edges");
-
-    JSONArray edges = new JSONArray();
-    for (DefaultEdge edge : graph.edgeSet()) {
-      edges.put(new JSONObject()
-          .put("source", graph.getEdgeTarget(edge))
-          .put("target", graph.getEdgeSource(edge)));
-    }
-
-    JSONArray array = new JSONArray();
-    for (String name : getNodesInTraversalOrder(graph)) {
-      Node node = allDeps.get(name);
-
-      array.put(new JSONObject()
-          .put("artifactId", node.getArtifactId())
-          .put("groupId", node.getGroupId())
-          .put("prettyName", node.getPrettyName())
-          .put("fullName", node.getFullName())
-          .put("inheritSize", node.getInheritSize())
-          .put("totalDeps", node.getTotalDeps())
-          .put("size", node.getSize())
-      );
-    }
-
-    return new JSONObject()
-        .put("artifacts", array)
-        .put("edges", edges);
 
   }
 

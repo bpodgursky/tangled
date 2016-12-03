@@ -17,6 +17,7 @@
   <script src="resources/dagre-d3.min.js"></script>
   <script src="resources/spin.min.js"></script>
   <script src="resources/jquery.spin.js"></script>
+  <script src="resources/bootbox.min.js"></script>
 
   <script src="js/multimap.js"></script>
 
@@ -73,8 +74,6 @@
   $("#path-from-artifact").click(function (e) {
     e.preventDefault();
 
-    resetExpand();
-
     $("#dep-visible-toggle label").removeClass('active');
     $("#dep_hidden_label").addClass('active');
     renderMode = "dep_hidden";
@@ -85,12 +84,9 @@
     $("#sourceGroupId").val('');
     $("#sourceArtifactId").val('');
 
-    expandAllChildren(
-        groupId,
-        artifactId
-    );
-
-    redrawGraph();
+    if (expandAllChildren(groupId, artifactId)) {
+      redrawGraph();
+    }
 
   });
 
@@ -145,6 +141,7 @@
 
   }
 
+  //  false if we fail
   function expandAllChildren(group, artifact) {
 
     var edges = new MultiMap();
@@ -154,6 +151,14 @@
     });
 
     var sourceName = group + "." + artifact;
+
+    if (edges.get(artifact).length < 1) {
+      bootbox.alert("No edges found from artifact: " +sourceName);
+      return false;
+    }
+
+    resetExpand();
+
     var queue = [sourceName];
 
     while (queue.length > 0) {
@@ -165,7 +170,8 @@
       });
     }
 
-  }
+    return true;
+    }
 
   function renderFromInputs() {
 
@@ -317,13 +323,20 @@
       success: function (data) {
         $('#attach').spin(false);
 
-        dataRaw = JSON.parse(data);
-        redrawGraph();
+        var newData = JSON.parse(data);
+
+        if (newData.error) {
+          bootbox.alert("Could not resolve artifact: " + groupId + ":" + artifactId + ":" + version);
+        } else {
+          dataRaw = newData;
+          redrawGraph();
+        }
+
       }
     });
   }
 
-  function buildLabel(pretty){
+  function buildLabel(pretty) {
     return pretty;
 //    return pretty.split(".").join("<br>")
   }
@@ -336,7 +349,7 @@
     var dataParsed = buildCollapsedGraph(dataRaw);
 
     var g = new dagreD3.graphlib.Graph()
-        .setGraph({nodesep:15})
+        .setGraph({nodesep: 15})
         .setDefaultEdgeLabel(function () {
           return {};
         });
