@@ -13,6 +13,19 @@
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
   </properties>
 
+  <distributionManagement>
+    <snapshotRepository>
+      <id>repository.liveramp.com</id>
+      <name>repository.liveramp.com-snapshots</name>
+      <url>http://repository.liveramp.com/artifactory/libs-snapshot-local</url>
+    </snapshotRepository>
+    <repository>
+      <id>repository.liveramp.com</id>
+      <name>repository.liveramp.com-releases</name>
+      <url>http://repository.liveramp.com/artifactory/libs-release-local</url>
+    </repository>
+  </distributionManagement>
+
   <dependencies>
 
     <dependency>
@@ -147,30 +160,45 @@
 
       <plugin>
         <artifactId>maven-assembly-plugin</artifactId>
-        <configuration>
-          <archive>
-            <manifest>
-              <addDefaultImplementationEntries>true</addDefaultImplementationEntries>
-            </manifest>
-            <manifestEntries>
-              <Implementation-Build>${build-commit}</Implementation-Build>
-            </manifestEntries>
-          </archive>
-          <descriptors>
-            <descriptor>src/main/resources/com/liveramp/tangled/jobjar.xml</descriptor>
-          </descriptors>
-          <attach>false</attach>
-        </configuration>
         <executions>
+
           <execution>
             <phase>package</phase>
+            <id>uberjar</id>
             <goals>
               <goal>single</goal>
             </goals>
             <configuration>
               <attach>false</attach>
+              <archive>
+                <manifest>
+                  <addDefaultImplementationEntries>true</addDefaultImplementationEntries>
+                </manifest>
+                <manifestEntries>
+                  <Implementation-Build>${build-commit}</Implementation-Build>
+                </manifestEntries>
+              </archive>
+              <descriptors>
+                <descriptor>src/main/resources/com/liveramp/tangled/jobjar.xml</descriptor>
+              </descriptors>
+              <attach>false</attach>
             </configuration>
           </execution>
+
+          <execution>
+            <phase>package</phase>
+            <id>deploy-bundle</id>
+            <goals>
+              <goal>single</goal>
+            </goals>
+            <configuration>
+              <attach>true</attach>
+              <descriptors>
+                <descriptor>src/main/resources/com/liveramp/tangled/deploy.bundle.xml</descriptor>
+              </descriptors>
+            </configuration>
+          </execution>
+
         </executions>
       </plugin>
     </plugins>
